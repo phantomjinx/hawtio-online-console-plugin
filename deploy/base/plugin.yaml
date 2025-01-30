@@ -11,3 +11,13 @@ spec:
       namespace: hawtio-dev
       port: 9443
       basePath: '/'
+  proxy:
+    - type: Service
+      alias: echo
+      authorization: UserToken
+      endpoint:
+        type: Service
+        service:
+          name: http-echo
+          namespace: hawtio-dev
+          port: 8443

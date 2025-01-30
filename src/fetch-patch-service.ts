@@ -1,6 +1,8 @@
 import * as fetchIntercept from 'fetch-intercept'
 import { PLUGIN_BASE_PATH } from './constants'
 import { getCSRFToken } from './utils/https'
+import { consoleFetchJSON } from '@openshift-console/dynamic-plugin-sdk'
+import { joinPaths } from './utils'
 
 const hawtioFetchPaths = {
   presetConnections: { path: 'preset-connections', regex: /\/\/preset-connections$/ },
@@ -32,6 +34,17 @@ class FetchPatchService {
     if (this.fetchUnregister)
       return // Nothing to do
 
+    const gatewayStatusUrl = '/api/proxy/plugin/hawtio-online-console-plugin/gateway/status'
+    const echoUrl = '/api/proxy/plugin/hawtio-online-console-plugin/echo/jolokia'
+
+    const podName = 'hawtio-online-example-camel-springboot-os-5-zjpk6'
+
+    consoleFetchJSON(joinPaths(echoUrl, podName))
+      .then((response) => {
+        console.log('Response for echo proxy:')
+        console.log(response)
+      })
+
     this.fetchUnregister = fetchIntercept.register({
       request: (url, requestConfig) => {
         for (const fetchPath of Object.values(hawtioFetchPaths)) {
@@ -40,15 +53,18 @@ class FetchPatchService {
           }
         }
 
+        console.log(`Fetching url ${url}`)
+
         // Include any requestConfig headers to ensure they are retained
         let headers: Headers = {
           'Content-Type': 'application/json',
+          'Authorization': 'Bearer sha256~tLPE3K-iFFkXj3kBpb1IzG7Cm-iVJ1wr8ArUx-KLrTc'
         }
 
         // Required token for protected authenticated access
         // to cluster from the console
-          this.csrfToken = getCSRFToken()
-        // }
+        this.csrfToken = getCSRFToken()
+        console.log(`CSRF TOKEN: ${this.csrfToken}`)
 
         if (this.csrfToken) {
           headers = {
@@ -63,6 +79,9 @@ class FetchPatchService {
         if (requestConfig && requestConfig.headers) {
           headers = { ...requestConfig.headers, ...headers }
         }
+
+        console.log('Sending Request headers:')
+        console.log(headers)
 
         // headers must be 2nd so that it overwrites headers property in requestConfig
         return [url, { ...requestConfig, headers }]

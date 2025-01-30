@@ -11,4 +11,4 @@ kind: Kustomization
 images:
 - name: quay.io/hawtio/hawtio-online-console-plugin
   newName: quay.io/phantomjinx/hawtio-online-console-plugin
-  newTag: 0.0.1-20250129133648
+  newTag: 0.0.1-202501311306

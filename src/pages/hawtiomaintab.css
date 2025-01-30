@@ -12,3 +12,7 @@
 .react-flow__node-camel .camel-node-content {
   background-color: #656565 !important;
 }
+
+.gutter {
+  background-color: black !important;
+}

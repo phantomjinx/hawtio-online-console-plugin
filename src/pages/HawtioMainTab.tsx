@@ -33,10 +33,8 @@ export const HawtioMainTab: React.FunctionComponent<HawtioMainTabProps> = (props
 
   useEffect(() => {
     fetchPatchService.setupFetch()
-    // Cleanup the fetch-patch-service when unmounted
     return () => {
       hawtioService.destroy()
-      fetchPatchService.destroy()
     }
   }, [])
 

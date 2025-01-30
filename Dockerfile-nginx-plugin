@@ -1,0 +1,64 @@
+FROM docker.io/node:20-alpine as builder
+
+#
+# The plugin name
+#
+ENV PLUGIN_NAME hawtio-online-console-plugin
+
+WORKDIR /${PLUGIN_NAME}
+
+COPY .yarn/plugins .yarn/plugins
+COPY .yarn/releases .yarn/releases
+COPY locales locales
+COPY public public
+COPY src src
+COPY .yarnrc.yml ./
+COPY console-extensions.json console-extensions.json
+COPY Makefile Makefile
+COPY package.json package.json
+COPY tsconfig.json tsconfig.json
+COPY webpack.config.common.js webpack.config.common.js
+COPY yarn.lock yarn.lock
+COPY webpack.config.prod.js webpack.config.prod.js
+
+RUN command -v yarn || npm i -g yarn
+
+USER root
+
+## Install dependencies
+RUN yarn install
+
+## Build application
+RUN yarn build
+
+### END BUILD STAGE ###
+
+FROM registry.access.redhat.com/ubi9/nginx-120:latest
+
+#
+# The plugin name
+#
+ENV PLUGIN_NAME hawtio-online-console-plugin
+
+COPY docker/nginx-gateway.conf.template docker/nginx.sh /
+
+# Copy include directory
+COPY docker/includes /etc/nginx/includes
+
+# Copy error pages
+COPY docker/hawtio-?0?.html /usr/share/nginx/html/
+
+COPY --from=builder ${PLUGIN_NAME}/dist /usr/share/nginx/html/
+
+# Copy the hawtconfig.json configuration file
+COPY public/hawtconfig.json /usr/share/nginx/html/
+
+USER 1001
+
+ENTRYPOINT ["nginx", "-g", "daemon off;"]
+
+## Labels
+LABEL name="hawtio/hawtio-online-console-plugin"
+LABEL description="Hawtio Online Console Integrated Plugin"
+LABEL maintainer="Paul Richardson <parichar@redhat.com>"
+LABEL version="0.0.1"

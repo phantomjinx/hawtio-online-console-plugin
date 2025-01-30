@@ -45,6 +45,8 @@ spec:
               readOnly: true
               mountPath: /etc/nginx/nginx.conf
               subPath: nginx.conf
+            - name: hawtio-online-tls-proxying
+              mountPath: /etc/tls/private/proxying
       volumes:
         - name: plugin-serving-cert
           secret:

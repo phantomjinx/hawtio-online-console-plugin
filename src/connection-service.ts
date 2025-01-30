@@ -4,7 +4,6 @@ import {
   JolokiaSuccessResponse,
   VersionResponseValue as JolokiaVersionResponseValue,
 } from 'jolokia.js'
-// import { getConsoleRequestHeaders, consoleFetchJSON } from '@openshift-console/dynamic-plugin-sdk'
 import { K8sPod } from './types'
 import { ContainerPort, Container } from 'kubernetes-types/core/v1'
 import { Connection, Connections, SESSION_KEY_CURRENT_CONNECTION, connectService, eventService } from '@hawtio/react'
