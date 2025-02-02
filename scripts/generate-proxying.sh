@@ -77,9 +77,10 @@ if [ -z "${NAMESPACE}" ]; then
   fi
 fi
 
-SECRET_NAME=${1:-hawtio-online-console-plugin-tls-proxying}
+SECRET_NAME=${1:-hawtio-online-console-plugin-gateway-proxying}
 
-# Must remain the same as jolokia matches this hostname with HTTPS
+# Host name must match that used by jolokia in the target application
+# Otherwise, will see HTTPS failures
 CN=${2:-hawtio-online.hawtio.svc}
 
 cd "$TEMP_DIR"

@@ -13,7 +13,6 @@ import {
   springboot,
   userService,
   Logger,
-  jolokiaService,
 } from '@hawtio/react'
 import { HAWTIO_ONLINE_VERSION } from './constants'
 import { log } from './globals'

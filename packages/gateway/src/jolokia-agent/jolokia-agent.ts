@@ -1,21 +1,25 @@
 import yaml from 'yaml'
 import { Request as ExpressRequest, Response as ExpressResponse } from 'express-serve-static-core'
+import fetch from 'node-fetch'
 import { jwtDecode } from 'jwt-decode'
 import * as fs from 'fs'
+import https from 'https'
 import { JolokiaRequest as MBeanRequest } from 'jolokia.js'
 import { logger } from '../logger'
-import { GatewayOptions } from '../globals'
-import { isObject, isError, maskIPAddresses } from '../utils'
+import { isObject, isError, maskIPAddresses, joinPaths, printObject } from '../utils'
 import {
   AgentInfo,
   InterceptedResponse,
+  getClusterAddr,
+  SSLOptions,
   SimpleResponse,
   extractHeaders,
-  getFetchHeaders,
+  toFetchHeaders,
   isMBeanRequest,
   isMBeanRequestArray,
   isResponse,
   isSimpleResponse,
+  fromFetchHeaders,
 } from './globals'
 import * as RBAC from './rbac'
 
@@ -96,7 +100,7 @@ function getSubjectFromJwt(agentInfo: AgentInfo): string | undefined {
   return payload.sub
 }
 
-async function selfLocalSubjectAccessReview(verb: string, agentInfo: AgentInfo): Promise<Response> {
+async function selfLocalSubjectAccessReview(verb: string, agentInfo: AgentInfo): Promise<SimpleResponse> {
   logger.trace('(jolokia-agent) selfLocalSubjectAccessReview ....')
 
   let api
@@ -133,32 +137,58 @@ async function selfLocalSubjectAccessReview(verb: string, agentInfo: AgentInfo):
   }
   const json = JSON.stringify(body)
 
-  // Work-around same-location sub-requests caching issue
-  const suffix = verb === 'get' ? '2' : ''
-
-  const authUri = `${agentInfo.options.websvr}/authorization${suffix}/${api}/namespaces/${agentInfo.namespace}/localsubjectaccessreviews`
+  // /apis/authorization.k8s.io/v1/namespaces/{namespace}/localsubjectaccessreviews
+  const authUri = joinPaths(getClusterAddr(), 'apis', api, 'v1', 'namespaces', agentInfo.namespace, 'localsubjectaccessreviews')
 
   logger.trace(`(jolokia-agent) Verifying authorization at uri ${authUri}`)
 
   const response = await fetch(authUri, {
     method: 'POST',
     body: json,
-    headers: getFetchHeaders(agentInfo.requestHeaders),
-  })
+    headers: toFetchHeaders(agentInfo.requestHeaders),
+    agent: new https.Agent({
+        cert: agentInfo.sslOptions.certCA,
+        rejectUnauthorized: false,
+        keepAlive: false,
+      })
+    })
 
-  return response
+  if (!response.ok) {
+    logger.trace(`(jolokia-agent) selfLocalSubjectAccessReview failed (${response.status})`)
+    return new SimpleResponse(
+      response.status,
+      JSON.stringify({ message: response.statusText }),
+      fromFetchHeaders(response.headers)
+    )
+  }
+
+  let data = await response.json()
+  let sar = isObject(data) ? data : JSON.parse(data as string)
+
+  logger.trace(`(jolokia-agent) selfLocalSubjectAccessReview sar: (${printObject(sar)})`)
+  return new SimpleResponse(
+    response.status,
+    (useForm ? sar.status.allowed : sar.allowed).toString(),
+    fromFetchHeaders(response.headers)
+  )
 }
 
 async function getPodIP(agentInfo: AgentInfo): Promise<string> {
   logger.trace('(jolokia-agent) getPodIP ....')
 
-  const podIPUri = `${agentInfo.options.websvr}/podIP/${agentInfo.namespace}/${agentInfo.pod}`
+  // /api/v1/namespaces/$1/pods/$2
+  const podIPUri = joinPaths(getClusterAddr(), 'api', 'v1', 'namespaces', agentInfo.namespace, 'pods', agentInfo.pod)
 
   logger.trace(`(jolokia-agent) Getting pod ip from uri ${podIPUri}`)
 
   const res = await fetch(podIPUri, {
     method: 'GET',
-    headers: getFetchHeaders(agentInfo.requestHeaders),
+    headers: toFetchHeaders(agentInfo.requestHeaders),
+    agent: new https.Agent({
+        cert: agentInfo.sslOptions.certCA,
+        rejectUnauthorized: false,
+        keepAlive: false,
+      })
   })
   if (!res.ok) {
     return Promise.reject(res)
@@ -178,30 +208,53 @@ async function callJolokiaAgent(
 
   const encodedPath = encodeURI(agentInfo.path)
   const method = agentInfo.request.method
-  const agentUri = `${agentInfo.options.websvr}/proxy/${agentInfo.protocol}:${podIP}:${agentInfo.port}/${encodedPath}`
 
-  let response: Response
-  if (method === 'GET') {
-    response = await fetch(agentUri, {
-      headers: getFetchHeaders(agentInfo.requestHeaders),
-    })
-  } else {
-    response = await fetch(agentUri, {
-      method: method,
-      body: JSON.stringify(nonInterceptedMBeans),
-      headers: getFetchHeaders(agentInfo.requestHeaders),
+  const agentUri = joinPaths(`${agentInfo.protocol}://${podIP}:${agentInfo.port}`, encodedPath)
+
+  const headers = toFetchHeaders(agentInfo.requestHeaders)
+  logger.trace(`(jolokia-agent) callJolokiaAgent - ${agentUri}`)
+  logger.trace(`(jolokia-agent) callJolokiaAgent - sending headers`)
+  headers.forEach((value,key) => {
+    logger.trace(`(jolokia-agent) callJolokiaAgent - header ${key} : ${value}`)
+  })
+
+  const options: fetch.RequestInit = {
+    method: method,
+    headers: toFetchHeaders(agentInfo.requestHeaders)
+  }
+
+  if (method === 'POST') {
+    options.body = JSON.stringify(nonInterceptedMBeans)
+  }
+  if (agentInfo.protocol === 'https') {
+    options.agent = new https.Agent({
+      key: agentInfo.sslOptions.proxyKey,
+      cert: agentInfo.sslOptions.proxyCert,
+      rejectUnauthorized: false,
+      keepAlive: false,
     })
   }
+
+  const response = await fetch(agentUri, options)
+  logger.trace(`(jolokia-agent) callJolokiaAgent response: ${printObject(response)}`)
 
   if (!response.ok) {
-    return Promise.reject(response)
+    logger.trace(`(jolokia-agent) callJolokiaAgent failed (${response.status})`)
+    return reject(response.status, { reason: `calljolokiaAgent was rejected: ${response.statusText}` })
   }
 
-  const data = await response.text()
-  return {
-    status: response.status,
-    headers: response.headers,
-    body: data,
+  try {
+    const data = await response.text()
+    logger.trace(`(jolokia-agent) callJolokiaAgent response: ${printObject(data)}`)
+
+    return new SimpleResponse(
+      response.status,
+      data,
+      fromFetchHeaders(response.headers)
+    )
+  } catch (error) {
+    logger.trace(`Error when getting data from response: ${printObject(error)}`)
+    throw new Error('Failed to parse data from response', {cause: error})
   }
 }
 
@@ -288,15 +341,29 @@ function parseRequest(agentInfo: AgentInfo): MBeanRequest | MBeanRequest[] {
 async function listMBeans(podIP: string, agentInfo: AgentInfo): Promise<Record<string, unknown>> {
   logger.trace('(jolokia-agent) listMBeans ...')
 
-  const uri = `${agentInfo.options.websvr}/proxy/${agentInfo.protocol}:${podIP}:${agentInfo.port}/${agentInfo.path}`
+  const encodedPath = encodeURI(agentInfo.path)
+  const uri = joinPaths(`${agentInfo.protocol}://`, `${podIP}:${agentInfo.port}`, encodedPath)
 
-  const response = await fetch(uri, {
+  logger.trace(`(jolokia-agent) listMBeans with uri ${uri}`)
+  const options: fetch.RequestInit = {
     method: 'POST',
     body: JSON.stringify({ type: 'list' }),
-    headers: getFetchHeaders(agentInfo.requestHeaders),
-  })
+    headers: toFetchHeaders(agentInfo.requestHeaders)
+  }
+
+  if (agentInfo.protocol === 'https') {
+    options.agent = new https.Agent({
+      key: agentInfo.sslOptions.proxyKey,
+      cert: agentInfo.sslOptions.proxyCert,
+      rejectUnauthorized: false,
+      keepAlive: false,
+    })
+  }
+
+  const response = await fetch(uri, options)
 
   if (!response.ok) {
+    logger.trace(`(jolokia-agent) listMBeans failed (${response.status})`)
     return Promise.reject(response)
   }
 
@@ -359,11 +426,10 @@ async function handleRequestWithRole(role: string, agentInfo: AgentInfo): Promis
 
     // Re-assembled bulk response
     const headers = new Headers(jolokiaResponse.headers)
-    const response = {
-      status: jolokiaResponse.status,
-      body: JSON.stringify(bulk),
-      headers: headers,
-    }
+    const response = new SimpleResponse(
+      jolokiaResponse.status,
+      JSON.stringify(bulk),
+      headers)
 
     // Override the content length that changed while re-assembling the bulk response
     // Headers on this response is immutable so update agentinfo.response
@@ -386,11 +452,10 @@ async function handleRequestWithRole(role: string, agentInfo: AgentInfo): Promis
 
     const intercepted = RBAC.intercept(mbeanRequest, role, mbeans)
     if (intercepted.intercepted) {
-      return {
-        status: intercepted.response?.status || 502,
-        body: JSON.stringify(intercepted.response),
-        headers: new Headers(),
-      }
+      return new SimpleResponse(
+        intercepted.response?.status || 502,
+        JSON.stringify(intercepted.response)
+      )
     }
 
     return callJolokiaAgent(podIP, agentInfo, agentInfo.request.body)
@@ -402,35 +467,24 @@ async function proxyJolokiaAgentWithRbac(agentInfo: AgentInfo): Promise<SimpleRe
 
   let response = await selfLocalSubjectAccessReview('update', agentInfo)
   if (!response.ok) {
-    return Promise.reject({
-      status: response.status,
-      body: response.body,
-    })
+    return reject(response.status, { reason: `Authorization was rejected: ${response.body}` })
   }
 
   let role
-  let data = await response.json()
-  let sar = isObject(data) ? data : JSON.parse(data as string)
-  let allowed = useForm ? sar.status.allowed : sar.allowed
-
-  if (allowed) {
+  if (response.body === 'true') {
     // map the `update` verb to the `admin` role
     role = 'admin'
   } else {
     response = await selfLocalSubjectAccessReview('get', agentInfo)
     if (!response.ok) {
-      return Promise.reject(response)
+      return reject(response.status, { reason: `Authorization was rejected: ${response.body}` })
     }
 
-    data = await response.json()
-    sar = isObject(data) ? data : JSON.parse(data as string)
-    allowed = useForm ? sar.status.allowed : sar.allowed
-
-    if (allowed) {
+    if (response.body === 'true') {
       // map the `get` verb to the `viewer` role
       role = 'viewer'
     } else {
-      return reject(403, sar)
+      return reject(403, { message: `Subject Access Review Result: { allowed: ${response.body} }`})
     }
   }
 
@@ -444,15 +498,10 @@ async function proxyJolokiaAgentWithoutRbac(agentInfo: AgentInfo): Promise<Simpl
   // hosting the Jolokia endpoint is authorized
   const response = await selfLocalSubjectAccessReview('update', agentInfo)
   if (!response.ok) {
-    return reject(response.status, { reason: `Authorization was rejected: ${response.statusText}` })
+    return reject(response.status, { reason: `Authorization was rejected: ${response.body}` })
   }
-
-  logger.trace('(jolokia-agent) Passed selfLocalSubjectAccessReview')
-  const data = await response.json()
-  const sar = isObject(data) ? data : JSON.parse(data as string)
-  const allowed = useForm ? sar.status.allowed : sar.allowed
-  if (!allowed) {
-    return reject(403, sar)
+  else if (response.body !== 'true') {
+    return reject(403, { message: `Subject Access Review Result: { allowed: ${response.body} }`})
   }
 
   const podIP = await getPodIP(agentInfo)
@@ -460,7 +509,7 @@ async function proxyJolokiaAgentWithoutRbac(agentInfo: AgentInfo): Promise<Simpl
   return jolokiaResult
 }
 
-export function proxyJolokiaAgent(req: ExpressRequest, res: ExpressResponse, options: GatewayOptions) {
+export function proxyJolokiaAgent(req: ExpressRequest, res: ExpressResponse, sslOptions: SSLOptions) {
   logger.trace('(jolokia-agent) proxyJolokiaAgent ...')
   logger.trace(`(jolokia-agent) acting on ${req.originalUrl}`)
 
@@ -472,7 +521,7 @@ export function proxyJolokiaAgent(req: ExpressRequest, res: ExpressResponse, opt
           request: req,
           requestHeaders: extractHeaders(req, excludeHeaders),
           response: res,
-          options: options,
+          sslOptions: sslOptions,
           namespace: '',
           protocol: '',
           pod: '',
@@ -488,7 +537,7 @@ export function proxyJolokiaAgent(req: ExpressRequest, res: ExpressResponse, opt
     request: req,
     requestHeaders: extractHeaders(req, excludeHeaders),
     response: res,
-    options: options,
+    sslOptions: sslOptions,
     namespace: parts[1],
     protocol: parts[2],
     pod: parts[3],
@@ -503,27 +552,21 @@ export function proxyJolokiaAgent(req: ExpressRequest, res: ExpressResponse, opt
       if (isSimpleResponse(error)) {
         simpleResponse = error
       } else if (isResponse(error)) {
-        simpleResponse = {
-          status: error.status,
-          body: !error.body ? error.statusText : error.body,
-          headers: new Headers(),
-        }
+        simpleResponse = new SimpleResponse(
+          error.status,
+          !error.body ? error.statusText : error.statusText + '---' + error.body,
+        )
       } else if (isError(error)) {
         let body
         if (isObject(error.message)) body = JSON.stringify(error.message)
         else body = `{error: "${error.message}"}`
 
-        simpleResponse = {
-          status: 502,
-          body: body,
-          headers: new Headers(),
-        }
+        simpleResponse = new SimpleResponse(502, body)
       } else {
-        simpleResponse = {
-          status: !error.status ? 502 : error.status,
-          body: !error.body ? error.statusText : error.body,
-          headers: new Headers(),
-        }
+        simpleResponse = new SimpleResponse(
+          !error.status ? 502 : error.status,
+          !error.body ? error.statusText : error.statusText + '---' + error.body
+        )
       }
 
       logger.error(`Error response encountered: ${JSON.stringify(simpleResponse)}`)

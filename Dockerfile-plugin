@@ -4,22 +4,23 @@ FROM docker.io/node:20-alpine as builder
 # The plugin name
 #
 ENV PLUGIN_NAME hawtio-online-console-plugin
+ENV PACKAGE_PLUGIN packages/plugin
 
 WORKDIR /${PLUGIN_NAME}
 
 COPY .yarn/plugins .yarn/plugins
 COPY .yarn/releases .yarn/releases
-COPY locales locales
-COPY public public
-COPY src src
 COPY .yarnrc.yml ./
-COPY console-extensions.json console-extensions.json
 COPY Makefile Makefile
-COPY package.json package.json
-COPY tsconfig.json tsconfig.json
-COPY webpack.config.common.js webpack.config.common.js
 COPY yarn.lock yarn.lock
-COPY webpack.config.prod.js webpack.config.prod.js
+COPY ${PACKAGE_PLUGIN}/locales locales
+COPY ${PACKAGE_PLUGIN}/public public
+COPY ${PACKAGE_PLUGIN}/src src
+COPY ${PACKAGE_PLUGIN}/console-extensions.json console-extensions.json
+COPY ${PACKAGE_PLUGIN}/package.json package.json
+COPY ${PACKAGE_PLUGIN}/tsconfig.json tsconfig.json
+COPY ${PACKAGE_PLUGIN}/webpack.config.common.js webpack.config.common.js
+COPY ${PACKAGE_PLUGIN}/webpack.config.prod.js webpack.config.prod.js
 
 RUN command -v yarn || npm i -g yarn
 
@@ -33,14 +34,55 @@ RUN yarn build
 
 ### END BUILD STAGE ###
 
-FROM registry.access.redhat.com/ubi9/nginx-120:latest
+### INSTALL envsubst STAGE ###
+
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.4 as envsubst
+RUN microdnf -y install gettext
+
+### END INSTALL envsubst STAGE ###
+
+
+### CONFIGURE STAGE ###
+
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.4
+
+#
+# Version of nginx
+#
+ENV NGINX_MAJOR_VERSION 1
+ENV NGINX_MINOR_VERSION 22
+ENV NGINX_BUILD_VERSION 1
+
+#
+# Install nginx and cleanup
+#
+RUN microdnf -y module enable nginx:${NGINX_MAJOR_VERSION}.${NGINX_MINOR_VERSION}
+RUN microdnf install -y nginx-${NGINX_MAJOR_VERSION}.${NGINX_MINOR_VERSION}.${NGINX_BUILD_VERSION} && \
+    microdnf clean all
 
 #
 # The plugin name
 #
 ENV PLUGIN_NAME hawtio-online-console-plugin
+ENV PACKAGE_PLUGIN packages/plugin
 
-COPY docker/nginx-gateway.conf.template docker/nginx.sh /
+USER root
+
+# forward request and error logs to docker log collector
+# - Change pid file location & remove nginx user & change port to 8080
+# - modify perms for non-root runtime
+RUN ln -sf /dev/stdout /var/log/nginx/access.log && \
+    ln -sf /dev/stderr /var/log/nginx/error.log && \
+    rm -f /etc/nginx/conf.d/default.conf && \
+    mkdir -p /var/cache/nginx && \
+    chown -R 1001 /var/cache/nginx /etc/nginx && \
+    chmod -R g=u /var/cache/nginx /etc/nginx
+
+EXPOSE 9443
+
+# Copies the nginx configuration template
+COPY docker/nginx-gateway.conf.template docker/nginx.sh /usr/share/nginx/
+RUN chmod 755 /usr/share/nginx/nginx.sh
 
 # Copy include directory
 COPY docker/includes /etc/nginx/includes
@@ -48,14 +90,19 @@ COPY docker/includes /etc/nginx/includes
 # Copy error pages
 COPY docker/hawtio-?0?.html /usr/share/nginx/html/
 
-COPY --from=builder ${PLUGIN_NAME}/dist /usr/share/nginx/html/
-
 # Copy the hawtconfig.json configuration file
-COPY public/hawtconfig.json /usr/share/nginx/html/
+COPY ${PACKAGE_PLUGIN}/public/hawtconfig.json /usr/share/nginx/html/
+
+COPY --from=builder ${PLUGIN_NAME}/dist /usr/share/nginx/html/
+COPY --from=envsubst /usr/bin/envsubst /usr/local/bin/
+
+# Copy licenses
+RUN mkdir -p /usr/share/hawtio/licenses
+COPY docker/licenses /usr/share/hawtio/licenses
 
 USER 1001
 
-ENTRYPOINT ["nginx", "-g", "daemon off;"]
+CMD ["/usr/share/nginx/nginx.sh"]
 
 ## Labels
 LABEL name="hawtio/hawtio-online-console-plugin"

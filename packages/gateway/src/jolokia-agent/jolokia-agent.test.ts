@@ -1,171 +1,81 @@
 import request from 'supertest'
 import express from 'express'
-import { Request as ExpressRequest, Response as ExpressResponse } from 'express-serve-static-core'
-import { JOLOKIA_PARAMS, JOLOKIA_PATH, JOLOKIA_PORT, JOLOKIA_URI, NAMESPACE, testData } from '../gateway-test-inputs'
+import * as fs from 'fs'
+import * as https from 'https'
+import path from 'path'
+
+/*
+ * Tell testing node environment to allow self-signed certificates
+ */
+process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"
 
 /*
  * Uncomment this to enable tracing of
  * functions while running tests
  */
-// process.env.LOG_LEVEL = 'trace'
+process.env.LOG_LEVEL = 'trace'
 
-import { expressLogger, logger } from '../logger'
+import { expressLogger } from '../logger'
+import {
+  CLUSTER_BASE_ADDRESS, CLUSTER_HOST, CLUSTER_PORT,
+  runningClusterServer, jolokiaUri, testData
+} from '../testing'
 import { proxyJolokiaAgent, enableRbac } from './jolokia-agent'
-import { isOptimisedCachedDomains } from './globals'
+import { isOptimisedCachedDomains, setClusterAddr, SSLOptions } from './globals'
 import { cloneObject } from '../utils'
 
-const app = express()
-
-// Log middleware requests
-app.use(expressLogger)
-app.use(express.json())
-app.use(express.urlencoded())
+/*
+ * Override the cluster master in the jolokia agent
+ */
+setClusterAddr(CLUSTER_BASE_ADDRESS)
 
 /******************************************
- * T E S T   A P P  /  W E B   S E R V E R
+ * T E S T   A P P   S E R V E R
  ******************************************/
 
-/**
- * Handler function for proxy route
+/*
+ * App server for carrying the jolokia agent for testing purposes
+ * Allows for correct creation of requests / responses
  */
-function proxyHandler(req: ExpressRequest, res: ExpressResponse) {
-  const parts = req.url.match(/^\/proxy\/(http|https):(.+):(\d+)\/(.*)$/)
-  if (!parts || parts.length < 5) {
-    logger.error('Not enough jolokia URI parts')
-    res.status(502).send()
-    return
-  }
+const appServer = express()
+appServer.use(expressLogger)
+appServer.use(express.json())
+appServer.use(express.urlencoded())
 
-  if (parts[1] !== 'http') {
-    logger.error(`Expected http got ${parts[1]}`)
-    res.status(502).send()
-    return
-  }
-
-  if (parts[2] !== testData.pod.resource.status.podIP) {
-    logger.error(`Expected ${testData.pod.resource.status.podIP} got ${parts[2]}`)
-    res.status(502).send()
-    return
-  }
-
-  if (parts[3] !== `${JOLOKIA_PORT}`) {
-    logger.error(`Expected ${JOLOKIA_PORT} got ${parts[3]}`)
-    res.status(502).send()
-    return
-  }
-
-  if (`/${parts[4]}` !== `${JOLOKIA_PATH}/?${JOLOKIA_PARAMS}`) {
-    logger.error(`Expected ${JOLOKIA_PATH}/?${JOLOKIA_PARAMS} got /${parts[4]}`)
-    res.status(502).send()
-    return
-  }
-
-  const reqPayload = JSON.stringify(req.body)
-
-  if (req.method === 'GET') {
-    // TODO handle when dealing with jolokia get requests
-  } else if (req.method === 'POST') {
-    let k: keyof typeof testData.jolokia
-    for (k in testData.jolokia) {
-      const td = testData.jolokia[k]
-
-      // Test if payload matches the initial test data request
-      if (reqPayload === JSON.stringify(td.request)) {
-        res.status(200).send(td.response)
-        return
-      }
-
-      if (Object.hasOwn(td, 'intercepted') && reqPayload === JSON.stringify(td.intercepted.request)) {
-        res.status(200).send(td.intercepted.response)
-        return
-      }
-    }
-
-    const msg = `ERROR: Proxy request body not expected: (${JSON.stringify(req.body)})`
-    logger.error(msg)
-    res.status(502).send(msg)
-    return
-  }
-
-  // Invalid method called
-  const msg = `ERROR: Proxy Handler request method not recognized: ${req.method}`
-  logger.error(msg)
-  res.status(502).send({ error: msg })
-}
-
-app.post('/authorization*/*', (req, res) => {
-  if (testData.authorization.forbidden) {
-    res.status(403).send()
-    return
-  }
-
-  if (!req.body || !req.body.verb) {
-    const msg = `ERROR: No authorization body or no verb provided in authorization body`
-    logger.error(msg)
-    res.status(502).send({ error: msg })
-    return
-  }
-
-  switch (req.body.verb) {
-    case 'get':
-      if (testData.authorization.viewerAllowed)
-        res.status(200).json(JSON.stringify(testData.authorization.allowedResponse))
-      else res.status(200).json(JSON.stringify(testData.authorization.notAllowedResponse))
-
-      return
-    case 'update':
-      if (testData.authorization.adminAllowed)
-        res.status(200).json(JSON.stringify(testData.authorization.allowedResponse))
-      else res.status(200).json(JSON.stringify(testData.authorization.notAllowedResponse))
-
-      return
-  }
-
-  const msg = 'ERROR: Failure part reached in authorization response'
-  logger.error(msg)
-  res.status(502).send({ error: msg })
-})
-
-app.get('/podIP/*', (req, res) => res.status(201).json(JSON.stringify(testData.pod.resource)))
-
-app
-  .route('/proxy*')
-  .get((req, res) => {
-    proxyHandler(req, res)
-  })
-  .post((req, res) => {
-    proxyHandler(req, res)
-  })
-
-/**********************
- * Test Server Routes
- **********************/
-
-/**
- * Handler function for management route
+/*
+ * Single route as provided by the gateway server
  */
-function managementHandler(req: ExpressRequest, res: ExpressResponse) {
-  const host = `http://${req.header('host') || ''}`
-
-  /*
-   * Provide this test server as the redirect target
-   */
-  const gatewayOptions = {
-    websvr: host,
-    clusterMaster: host,
-  }
-
-  proxyJolokiaAgent(req, res, gatewayOptions)
-}
-
-app
+appServer
   .route('/management/*')
   .get((req, res) => {
-    managementHandler(req, res)
+    proxyJolokiaAgent(req, res, proxySSLOptions)
   })
   .post((req, res) => {
-    managementHandler(req, res)
+    proxyJolokiaAgent(req, res, proxySSLOptions)
   })
+
+/*
+ * Provide SSL Options as gateway is SSL only
+ */
+const proxySSLOptions: SSLOptions = {
+  certCA: fs.readFileSync(path.resolve(__dirname, '..', '..', 'test-tls', 'CA', 'unit.test-ca.crt')),
+  proxyKey: fs.readFileSync(path.resolve(__dirname, '..', '..', 'test-tls', 'private', 'proxy.unit.test.key')),
+  proxyCert: fs.readFileSync(path.resolve(__dirname, '..', '..', 'test-tls', 'certs', 'proxy.unit.test.crt')),
+}
+
+/*
+ * Create the server but it will be fired up in the tests using supertest
+ */
+const appHttpsServer = https.createServer(
+  {
+    ca: fs.readFileSync(path.resolve(__dirname, '..', '..', 'test-tls', 'CA', 'unit.test-ca.crt')),
+    key: fs.readFileSync(path.resolve(__dirname, '..', '..', 'test-tls', 'private', 'server.unit.test.key')),
+    cert: fs.readFileSync(path.resolve(__dirname, '..', '..', 'test-tls', 'certs', 'server.unit.test.crt')),
+    requestCert: true,
+    rejectUnauthorized: false,
+  },
+  appServer,
+)
 
 /***********************************
  *            T E S T S
@@ -177,10 +87,21 @@ beforeEach(() => {
   testData.authorization.adminAllowed = true
   testData.authorization.viewerAllowed = true
   enableRbac(true)
+
+  /*
+   * Override jolokia URI components so that the final
+   * jolokia request is circled back to the cluster test server
+   */
+  testData.pod.resource.status.podIP = CLUSTER_HOST
+  testData.metadata.jolokia.port = CLUSTER_PORT
+})
+
+afterAll(() => {
+  runningClusterServer.close()
 })
 
 function appPost(uri: string, body: Record<string, unknown> | Record<string, unknown>[]) {
-  return request(app)
+  return request(appHttpsServer)
     .post(uri)
     .send(JSON.stringify(body))
     .set('location-rule', 'MANAGEMENT')
@@ -205,7 +126,7 @@ describe.each([
   it(`${testAuth}: Authorization forbidden`, async () => {
     enableRbac(rbac)
     testData.authorization.forbidden = true
-    const path = `/management/namespaces/${NAMESPACE}/pods/${JOLOKIA_URI}`
+    const path = `/management/namespaces/${testData.metadata.namespace}/pods/${jolokiaUri()}`
     return appPost(path, testData.jolokia.search.request).expect(403)
   })
 
@@ -213,17 +134,17 @@ describe.each([
     enableRbac(rbac)
     testData.authorization.adminAllowed = false
     testData.authorization.viewerAllowed = false
-    const path = `/management/namespaces/${NAMESPACE}/pods/${JOLOKIA_URI}`
+    const path = `/management/namespaces/${testData.metadata.namespace}/pods/${jolokiaUri()}`
     return appPost(path, testData.jolokia.search.request)
       .expect(403)
       .then(res => {
-        expect(res.text).toStrictEqual(JSON.stringify(testData.authorization.notAllowedResponse))
+        expect(res.text).toStrictEqual(JSON.stringify(testData.authorization.rejectedResponse))
       })
   })
 
   it(`${testAuth}: Authorization Post search`, async () => {
     enableRbac(rbac)
-    const path = `/management/namespaces/${NAMESPACE}/pods/${JOLOKIA_URI}`
+    const path = `/management/namespaces/${testData.metadata.namespace}/pods/${jolokiaUri()}`
     return appPost(path, testData.jolokia.search.request)
       .expect(200)
       .then(res => {
@@ -233,7 +154,7 @@ describe.each([
 
   it(`${testAuth}: Authorization Post registerList`, async () => {
     enableRbac(rbac)
-    const path = `/management/namespaces/${NAMESPACE}/pods/${JOLOKIA_URI}`
+    const path = `/management/namespaces/${testData.metadata.namespace}/pods/${jolokiaUri()}`
     return appPost(path, testData.jolokia.registerList.request)
       .expect(200)
       .then(res => {
@@ -256,7 +177,7 @@ describe.each([
 
   it(`${testAuth}: Authorization Post canInvokeMap`, async () => {
     enableRbac(rbac)
-    const path = `/management/namespaces/${NAMESPACE}/pods/${JOLOKIA_URI}`
+    const path = `/management/namespaces/${testData.metadata.namespace}/pods/${jolokiaUri()}`
     return appPost(path, testData.jolokia.canInvokeMap.request)
       .expect(200)
       .then(res => {
@@ -273,7 +194,7 @@ describe.each([
 
   it(`${testAuth}: Authorization Post canInvokeSingleAttribute`, async () => {
     enableRbac(rbac)
-    const path = `/management/namespaces/${NAMESPACE}/pods/${JOLOKIA_URI}`
+    const path = `/management/namespaces/${testData.metadata.namespace}/pods/${jolokiaUri()}`
     return appPost(path, testData.jolokia.canInvokeSingleAttribute.request)
       .expect(200)
       .then(res => {
@@ -290,7 +211,7 @@ describe.each([
 
   it(`${testAuth}: Authorization Post canInvokeSingleOperation`, async () => {
     enableRbac(rbac)
-    const path = `/management/namespaces/${NAMESPACE}/pods/${JOLOKIA_URI}`
+    const path = `/management/namespaces/${testData.metadata.namespace}/pods/${jolokiaUri()}`
     return appPost(path, testData.jolokia.canInvokeSingleOperation.request)
       .expect(200)
       .then(res => {
@@ -307,7 +228,7 @@ describe.each([
 
   it(`${testAuth}: Authorization Post bulkRequestWithInterception`, async () => {
     enableRbac(rbac)
-    const path = `/management/namespaces/${NAMESPACE}/pods/${JOLOKIA_URI}`
+    const path = `/management/namespaces/${testData.metadata.namespace}/pods/${jolokiaUri()}`
     return appPost(path, testData.jolokia.bulkRequestWithInterception.request)
       .expect(200)
       .then(res => {
@@ -336,13 +257,13 @@ describe.each([
     //
     const expectedStatus = 403
 
-    const path = `/management/namespaces/${NAMESPACE}/pods/${JOLOKIA_URI}`
+    const path = `/management/namespaces/${testData.metadata.namespace}/pods/${jolokiaUri()}`
     return appPost(path, testData.jolokia.operationWithArgumentsAndViewerRole.request)
       .expect(expectedStatus)
       .then(res => {
         if (rbac)
           expect(res.text).toStrictEqual(JSON.stringify(testData.jolokia.operationWithArgumentsAndViewerRole.response))
-        else expect(res.text).toStrictEqual(JSON.stringify(testData.authorization.notAllowedResponse))
+        else expect(res.text).toStrictEqual(JSON.stringify(testData.authorization.rejectedResponse))
       })
   })
 
@@ -358,12 +279,12 @@ describe.each([
     //
     const expectedStatus = rbac ? 200 : 403
 
-    const path = `/management/namespaces/${NAMESPACE}/pods/${JOLOKIA_URI}`
+    const path = `/management/namespaces/${testData.metadata.namespace}/pods/${jolokiaUri()}`
     return appPost(path, testData.jolokia.bulkRequestWithViewerRole.request)
       .expect(expectedStatus)
       .then(res => {
         if (rbac) expect(res.text).toStrictEqual(JSON.stringify(testData.jolokia.bulkRequestWithViewerRole.response))
-        else expect(res.text).toStrictEqual(JSON.stringify(testData.authorization.notAllowedResponse))
+        else expect(res.text).toStrictEqual(JSON.stringify(testData.authorization.rejectedResponse))
       })
   })
 
@@ -377,11 +298,11 @@ describe.each([
 
     const expectedStatus = 403
 
-    const path = `/management/namespaces/${NAMESPACE}/pods/${JOLOKIA_URI}`
+    const path = `/management/namespaces/${testData.metadata.namespace}/pods/${jolokiaUri()}`
     return appPost(path, testData.jolokia.requestOperationWithArgumentsAndNoRole.request)
       .expect(expectedStatus)
       .then(res => {
-        expect(res.text).toStrictEqual(JSON.stringify(testData.authorization.notAllowedResponse))
+        expect(res.text).toStrictEqual(JSON.stringify(testData.authorization.rejectedResponse))
       })
   })
 })

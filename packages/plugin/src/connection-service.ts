@@ -9,6 +9,7 @@ import { ContainerPort, Container } from 'kubernetes-types/core/v1'
 import { Connection, Connections, SESSION_KEY_CURRENT_CONNECTION, connectService, eventService } from '@hawtio/react'
 import { CONSOLE_SDK_BASEPATH, HTTPError, isBlank, isJolokiaVersionResponseType, joinPaths, jolokiaResponseParse, ParseResult, prefixForKind, toCollectionName, toKindName } from './utils'
 import { log } from './globals'
+import { PLUGIN_BASE_PATH, PROXY_GATEWAY_BASE_PATH } from './constants'
 
 const DEFAULT_JOLOKIA_PORT = 8778
 const JOLOKIA_PORT_QUERY = "$.spec.containers[*].ports[?(@.name==\"jolokia\")]";
@@ -141,20 +142,9 @@ class ConnectionService {
     const protocol = this.getAnnotation(pod, 'hawt.io/protocol', 'https')
     const jPath = this.getAnnotation(pod, 'hawt.io/jolokiaPath', '/jolokia/')
 
-    const collectionKind = toCollectionName(pod)
-    if (! collectionKind) {
-      log.error('Cannot get collection kind id for pod')
-      return null
-    }
-
-    const kindPrefix = prefixForKind(collectionKind) // api/v1
-    if (! kindPrefix) {
-      log.error('Cannot get kind API prefix for pod')
-      return null
-    }
-
-    const basePath = joinPaths(CONSOLE_SDK_BASEPATH, kindPrefix)
-    const path = joinPaths(basePath, 'namespaces', namespace, collectionKind, `${protocol}:${name}:${port}`, 'proxy', jPath)
+    const path = joinPaths(
+      PROXY_GATEWAY_BASE_PATH, 'management', 'namespaces', namespace,
+      'pods', `${protocol}:${name}:${port}`, jPath)
     return joinPaths(window.location.origin, path)
   }
 
@@ -276,7 +266,7 @@ class ConnectionService {
    * connect-service. Instead it leaves that up to the interceptor
    * in fetch-patch-service.
    */
-  async testConnection(connection: Connection): Promise<string> {
+  private async testConnection(connection: Connection): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       const path = connectService.getJolokiaUrl(connection)
       fetch(path, {

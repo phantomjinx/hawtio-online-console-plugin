@@ -1,0 +1,18 @@
+namespace: hawtio-dev
+
+resources:
+- configmap-hawtio-rbac.yml
+- deployment-plugin.yml
+- deployment-gateway.yml
+- service-plugin.yml
+- service-gateway.yml
+- plugin.yml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+images:
+- name: quay.io/hawtio/online-console-plugin
+  newName: quay.io/phantomjinx/hawtio-online-console-plugin
+  newTag: 0.0.1-202502051118
+- name: quay.io/hawtio/online-console-plugin-gateway
+  newName: quay.io/phantomjinx/hawtio-online-console-plugin-gateway
+  newTag: 0.0.1-202502051118

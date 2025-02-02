@@ -1,6 +1,12 @@
 import { Request as ExpressRequest, Response as ExpressResponse } from 'express-serve-static-core'
 import { MBeanInfo, MBeanInfoError, MBeanAttribute, MBeanOperation, JolokiaRequest as MBeanRequest } from 'jolokia.js'
-import { GatewayOptions } from 'src/globals'
+import * as NodeFetch from 'node-fetch'
+
+export interface SSLOptions {
+  certCA: Buffer
+  proxyKey: Buffer
+  proxyCert: Buffer
+}
 
 export interface BulkValue {
   CanInvoke: boolean
@@ -76,7 +82,7 @@ export interface AgentInfo {
   request: ExpressRequest
   requestHeaders: Headers
   response: ExpressResponse
-  options: GatewayOptions
+  sslOptions: SSLOptions
   namespace: string
   protocol: string
   pod: string
@@ -84,10 +90,34 @@ export interface AgentInfo {
   path: string
 }
 
-export interface SimpleResponse {
-  status: number
-  body: string
-  headers: Headers
+export class SimpleResponse {
+  constructor(
+    public status: number,
+    public body: string,
+    private _headers?: Headers
+  ) {}
+
+  get headers() {
+    return ! this._headers ? new Headers() : this._headers
+  }
+
+  get ok() {
+    return this.status >= 200 && this.status <= 299
+  }
+}
+
+const DEFAULT_KUBE_CLUSTER_ADDRESS = 'https://kubernetes.default'
+let kubeClusterAddr = DEFAULT_KUBE_CLUSTER_ADDRESS
+
+export function getClusterAddr() {
+  return kubeClusterAddr
+}
+
+/*
+ * Probably only required for testing purposes
+ */
+export function setClusterAddr(address: string) {
+  kubeClusterAddr = address
 }
 
 export function isSimpleResponse(obj: unknown): obj is SimpleResponse {
@@ -210,7 +240,7 @@ export function isOptimisedCachedDomains(obj: unknown): obj is OptimisedCachedDo
   return (obj as OptimisedCachedDomains).cache !== undefined && (obj as OptimisedCachedDomains).domains !== undefined
 }
 
-export function extractHeaders(req: ExpressRequest, excludedHeaders: string[]) {
+export function extractHeaders(req: ExpressRequest, excludedHeaders: string[]): Headers {
   const headers = new Headers()
   for (const prop in req.headers) {
     if (excludedHeaders.includes(prop)) continue
@@ -224,8 +254,20 @@ export function extractHeaders(req: ExpressRequest, excludedHeaders: string[]) {
   return headers
 }
 
-export function getFetchHeaders(srcHeaders: Headers): Headers {
-  const headers = new Headers(srcHeaders)
+// Convert from request Headers type to node-fetch Headers
+export function toFetchHeaders(srcHeaders: Headers): NodeFetch.Headers {
+  const headers = new NodeFetch.Headers()
+  srcHeaders.forEach((value, name) => headers.append(name, value))
+
+  // Ensure the body can be parsed by Express
+  headers.append('Content-Type', 'application/json')
+  return headers
+}
+
+// Convert to response Headers type from node-fetch Headers
+export function fromFetchHeaders(srcHeaders: NodeFetch.Headers): Headers {
+  const headers = new Headers()
+  srcHeaders.forEach((value, name) => headers.append(name, value))
 
   // Ensure the body can be parsed by Express
   headers.append('Content-Type', 'application/json')

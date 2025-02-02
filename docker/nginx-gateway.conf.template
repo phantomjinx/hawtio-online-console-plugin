@@ -1,0 +1,91 @@
+worker_processes auto;
+error_log /var/log/nginx/error.log notice;
+pid /var/cache/nginx/nginx.pid;
+
+# Load dynamic modules. See /usr/share/doc/nginx/README.dynamic.
+include /usr/share/nginx/modules/*.conf;
+
+events {}
+
+http {
+  log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+
+  access_log          /dev/stdout;
+  error_log           /dev/stdout debug;
+
+  sendfile            on;
+  tcp_nopush          on;
+  keepalive_timeout   65;
+  types_hash_max_size 4096;
+
+  include             /etc/nginx/mime.types;
+  default_type        application/octet-stream;
+
+  server {
+
+    listen              9443 ssl;
+    server_name         localhost;
+    ssl_certificate     /etc/tls/private/serving/tls.crt;
+    ssl_certificate_key /etc/tls/private/serving/tls.key;
+    absolute_redirect   off;
+    gzip                on;
+    gzip_types text/plain application/javascript text/javascript;
+    root                /usr/share/nginx/html/;
+
+    # Limit the keepalive of connections (65s default)
+    keepalive_timeout 60s;
+
+    # Do not show server version
+    server_tokens off;
+
+    # Performance tuning
+    subrequest_output_buffer_size ${NGINX_SUBREQUEST_OUTPUT_BUFFER_SIZE};
+    client_body_buffer_size       ${NGINX_CLIENT_BODY_BUFFER_SIZE};
+    proxy_buffers                 ${NGINX_PROXY_BUFFERS};
+
+    # For debugging location rewrite
+    #rewrite_log on;
+
+    if ($request_method !~ ^(GET|HEAD|POST)$ ) {
+      return 444;
+    }
+
+    include /etc/nginx/includes/security-headers-common.conf;
+
+    # Only accept newer ssl protocols
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    error_page 403 /hawtio-403.html;
+    location = /hawtio-403.html {
+      internal;
+    }
+
+    error_page 404 /hawtio-404.html;
+    location = /hawtio-404.html {
+      internal;
+    }
+
+    error_page 500 502 503 504 /hawtio-50x.html;
+    location = /hawtio-50x.html {
+      internal;
+    }
+
+    location /auth/logout {
+      return 200 "Acknowledge logout but nothing further to do";
+    }
+
+    # Main Content serving
+    location / {
+      include /etc/nginx/includes/security-headers-online.conf;
+      add_header location-rule ONLINE always;
+      add_header Last-Modified $date_gmt;
+      add_header Cache-Control 'no-store, no-cache';
+      if_modified_since off;
+      expires off;
+      etag off;
+      gzip_static on;
+    }
+  }
+}

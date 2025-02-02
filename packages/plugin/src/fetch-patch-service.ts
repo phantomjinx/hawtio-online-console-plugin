@@ -34,17 +34,6 @@ class FetchPatchService {
     if (this.fetchUnregister)
       return // Nothing to do
 
-    const gatewayStatusUrl = '/api/proxy/plugin/hawtio-online-console-plugin/gateway/status'
-    const echoUrl = '/api/proxy/plugin/hawtio-online-console-plugin/echo/jolokia'
-
-    const podName = 'hawtio-online-example-camel-springboot-os-5-zjpk6'
-
-    consoleFetchJSON(joinPaths(echoUrl, podName))
-      .then((response) => {
-        console.log('Response for echo proxy:')
-        console.log(response)
-      })
-
     this.fetchUnregister = fetchIntercept.register({
       request: (url, requestConfig) => {
         for (const fetchPath of Object.values(hawtioFetchPaths)) {
@@ -57,8 +46,7 @@ class FetchPatchService {
 
         // Include any requestConfig headers to ensure they are retained
         let headers: Headers = {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer sha256~tLPE3K-iFFkXj3kBpb1IzG7Cm-iVJ1wr8ArUx-KLrTc'
+          'Content-Type': 'application/json'
         }
 
         // Required token for protected authenticated access
@@ -87,6 +75,35 @@ class FetchPatchService {
         return [url, { ...requestConfig, headers }]
       },
     })
+  //
+  //   const pods = [
+  //     {
+  //       namespace: 'hawtio-dev',
+  //       name: 'camel-helloworld-88f6d6496-84mh2',
+  //       protocol: 'http',
+  //       port: '10001',
+  //       jolokiaPath: '/actuator/jolokia/version'
+  //     },
+  //     {
+  //       namespace: 'hawtio-dev',
+  //       name: 'hawtio-online-example-camel-springboot-os-5-zjpk6',
+  //       protocol: 'https',
+  //       port: '8778',
+  //       jolokiaPath: '/jolokia/version'
+  //     }
+  //   ]
+  //
+  //   for (const pod of pods) {
+  //     const path = `/management/namespaces/${pod.namespace}/pods/${pod.protocol}:${pod.name}:${pod.port}${pod.jolokiaPath}`
+  //     const sidecarUrl = `${PLUGIN_BASE_PATH}/${path}`
+  //
+  //     console.log(`=== Trying to get a jolokia path for pod ${pod.name} ===`)
+  //     consoleFetchJSON(sidecarUrl)
+  //       .then((response) => {
+  //         console.log('Response for sidecar proxy:')
+  //         console.log(response)
+  //       })
+  //   }
   }
 
   destroy() {

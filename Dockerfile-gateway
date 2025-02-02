@@ -1,16 +1,18 @@
 FROM node:20-alpine as builder
 
+ENV PACKAGE_GATEWAY packages/gateway
+
 WORKDIR /hawtio-online-gateway
 
 COPY yarn.lock ./
 COPY .yarnrc.yml ./
 COPY .yarn/plugins .yarn/plugins
 COPY .yarn/releases .yarn/releases
-COPY docker/gateway/package.json ./
-COPY docker/gateway/webpack.config.prod.js ./
-COPY docker/gateway/tsconfig.json ./
-COPY docker/gateway/src ./src/
-COPY docker/gateway/public ./public/
+COPY ${PACKAGE_GATEWAY}/package.json ./
+COPY ${PACKAGE_GATEWAY}/webpack.config.prod.js ./
+COPY ${PACKAGE_GATEWAY}/tsconfig.json ./
+COPY ${PACKAGE_GATEWAY}/src ./src/
+COPY ${PACKAGE_GATEWAY}/public ./public/
 
 RUN yarn install
 RUN yarn build
@@ -25,6 +27,7 @@ FROM registry.access.redhat.com/ubi9/ubi-minimal:9.4
 ENV NODE_USER 9999
 
 ENV NODE_MAJOR_VERSION 20
+ENV PACKAGE_GATEWAY packages/gateway
 ENV GATEWAY_DIR=/opt/hawtio-online-gateway
 
 RUN microdnf -y module enable nodejs:20
@@ -32,8 +35,8 @@ RUN microdnf repoquery nodejs
 RUN microdnf -y install --setopt=tsflags=nodocs nodejs && microdnf clean all
 
 COPY --from=builder /hawtio-online-gateway/dist ${GATEWAY_DIR}/
-COPY docker/gateway/env.product ${GATEWAY_DIR}/
-COPY docker/gateway/gateway.sh ${GATEWAY_DIR}/
+COPY ${PACKAGE_GATEWAY}/env.product ${GATEWAY_DIR}/
+COPY ${PACKAGE_GATEWAY}/gateway.sh ${GATEWAY_DIR}/
 
 #
 # Finalize permissions for gateway files
@@ -47,6 +50,6 @@ RUN chmod 666 ${GATEWAY_DIR}/env.product
 
 USER ${NODE_USER}
 
-EXPOSE 3000
+EXPOSE 8443
 
 CMD ["/opt/hawtio-online-gateway/gateway.sh"]

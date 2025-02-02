@@ -1,5 +1,5 @@
 {
-  "name": "@hawtio/plugin-gateway",
+  "name": "@hawtio/online-plugin-gateway",
   "version": "0.0.1",
   "description": "The hawtio-online-plugin gateway to jolokia on OpenShift",
   "author": "Hawtio developer team",
@@ -17,13 +17,14 @@
     "OpenShift"
   ],
   "scripts": {
-    "start:gateway": "yarn start:gateway-dev & yarn start:gateway-server",
+    "start:gateway": "yarn start:gateway-dev && yarn start:gateway-server",
     "start:gateway-dev": "node --env-file .env.development proxy-dev-server.js",
     "start:gateway-server": "tsup --config tsup.config.dev.ts --watch",
     "build": "webpack --mode production --progress --config webpack.config.prod.js",
-    "test": "jest --detectOpenHandles",
-    "test:watch": "jest --detectOpenHandles --watch",
-    "test:coverage": "jest --coverage"
+    "test": "yarn create-test-certs && jest --detectOpenHandles",
+    "test:watch": "yarn create-test-certs && jest --detectOpenHandles --watch",
+    "test:coverage": "yarn create-test-certs && jest --coverage",
+    "create-test-certs": "cd test-tls && ./create-cert.sh && cd .."
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -44,11 +45,13 @@
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
+    "@types/express-serve-static-core": "^4.17.21",
     "@types/jest": "^29.5.13",
     "@types/jquery": "^3.5.31",
     "@types/js-yaml": "^4.0.9",
     "@types/method-override": "^0.0.35",
     "@types/node": "^20.14.9",
+    "@types/node-fetch": "^2.6.12",
     "@types/pino-multi-stream": "^5.1.6",
     "@types/supertest": "^6.0.2",
     "babel-jest": "^29.6.1",
@@ -75,5 +78,9 @@
   },
   "publishConfig": {
     "access": "private"
+  },
+  "resolutions": {
+    "@types/express-serve-static-core": "^4.17.21",
+    "@types/express": "^4.17.21"
   }
 }

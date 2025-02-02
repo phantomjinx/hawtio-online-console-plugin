@@ -13,6 +13,7 @@ import '@hawtio/react/dist/index.css'
 import { connectionService } from "../connection-service"
 import { stack } from "../utils"
 import './hawtiomaintab.css'
+import { log } from '../globals'
 
 /*
  * Necessary since fetchPatchService is otherwise
@@ -41,6 +42,8 @@ export const HawtioMainTab: React.FunctionComponent<HawtioMainTabProps> = (props
   useEffect(() => {
     if (isLoading) {
       const awaitServices = async () => {
+        log.debug(`Probing pod ${pod.metadata?.name} ...`)
+
         try {
           const url = await connectionService.probeJolokiaUrl(pod)
           if (!url) {
@@ -54,7 +57,8 @@ export const HawtioMainTab: React.FunctionComponent<HawtioMainTabProps> = (props
           return
         }
 
-        console.log('connecting ....')
+        log.debug(`Connecting to pod ${pod.metadata?.name} ...`)
+
         /*
          * Set the current connection before initializing
          */
@@ -65,7 +69,7 @@ export const HawtioMainTab: React.FunctionComponent<HawtioMainTabProps> = (props
           return
         }
 
-        console.log('initing ....')
+        log.debug(`Intialising Hawtio for pod ${pod.metadata?.name} ...`)
         await hawtioService.init()
 
         if (! hawtioService.isHawtioReady()) {
@@ -74,7 +78,7 @@ export const HawtioMainTab: React.FunctionComponent<HawtioMainTabProps> = (props
           return
         }
 
-        console.log('Ready to go!!!')
+        log.debug(`Hawtio initialize complete for ${pod.metadata?.name} ...`)
         setLoading(false)
       }
 

@@ -13,7 +13,7 @@
     "start-tls": "yarn clean && NODE_ENV=development yarn webpack serve --progress --profile --json=compilation-stats.json --env PLUGIN_NAME=$npm_package_name --env PACKAGE_VERSION=$npm_package_version --config webpack.config.tls.js",
     "start-console": "../../scripts/start-console.sh",
     "start-console-tls": "../../scripts/start-console-tls.sh",
-    "build": "yarn clean && NODE_ENV=production yarn webpack --env PLUGIN_NAME=$npm_package_name --env PACKAGE_VERSION=$npm_package_version --config webpack.config.prod.js",
+    "build": "yarn clean && NODE_ENV=production webpack --env PLUGIN_NAME=$npm_package_name --env PACKAGE_VERSION=$npm_package_version --config webpack.config.prod.js",
     "clean": "rm -rf dist",
     "webpack": "node -r ts-node/register --inspect ../../node_modules/.bin/webpack",
     "i18n": "./i18n-scripts/build-i18n.sh && node ./i18n-scripts/set-english-defaults.js"

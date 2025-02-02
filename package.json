@@ -13,10 +13,10 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "yarn build:online && yarn license",
+    "build": "yarn build:plugin && yarn build:gateway && yarn license",
     "start:plugin": "yarn workspace @hawtio/online-console-plugin start",
     "build:plugin": "yarn workspace @hawtio/online-console-plugin build",
-    "build:gateway": "yarn workspace @hawtio/gateway build",
+    "build:gateway": "yarn workspace @hawtio/online-plugin-gateway build",
     "lint": "yarn eslint packages/",
     "lint:fix": "yarn eslint packages/ --fix",
     "format:check": "yarn prettier --check packages/",
@@ -52,6 +52,8 @@
     "node": ">=20"
   },
   "resolutions": {
-    "eslint-config-react-app/eslint-plugin-react-hooks": "^4.6.2"
+    "eslint-config-react-app/eslint-plugin-react-hooks": "^4.6.2",
+    "@types/express-serve-static-core": "^4.17.21",
+    "@types/express": "^4.17.21"
   }
 }

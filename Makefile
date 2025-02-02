@@ -21,14 +21,16 @@ SHELL := /bin/bash
 
 VERSION := 0.0.1
 PLUGIN := hawtio-online-console-plugin
-#LAST_RELEASED_IMAGE_NAME := hawtio/$(PLUGIN)
+#LAST_RELEASED_PLUGIN_IMAGE := hawtio/$(PLUGIN)
 #LAST_RELEASED_VERSION ?=
 CONTROLLER_GEN_VERSION := v0.6.1
 OPERATOR_SDK_VERSION := v1.26.1
 KUSTOMIZE_VERSION := v4.5.4
 OPM_VERSION := v1.24.0
-IMAGE_NAME := quay.io/hawtio/$(PLUGIN)
-NGINX_DOCKERFILE := Dockerfile
+PLUGIN_IMAGE := quay.io/hawtio/online-console-plugin
+PLUGIN_DOCKERFILE := Dockerfile-plugin
+GATEWAY_IMAGE := quay.io/hawtio/online-console-plugin-gateway
+GATEWAY_DOCKERFILE := Dockerfile-gateway
 
 # Replace SNAPSHOT with the current timestamp
 DATETIMESTAMP=$(shell date -u '+%Y%m%d-%H%M%S')
@@ -48,7 +50,6 @@ KOPTIONS := --load-restrictor LoadRestrictionsNone
 #
 DEPLOY := deploy
 BASE := base
-HTTP := http
 PATCHES := patches
 PLACEHOLDER := placeholder
 
@@ -63,15 +64,15 @@ PLACEHOLDER := placeholder
 # - used in kustomize install
 # - need to preserve original image and version as used in other files
 #
-CUSTOM_IMAGE ?= $(IMAGE_NAME)
-CUSTOM_VERSION ?= $(VERSION)
+CUSTOM_PLUGIN_IMAGE ?= $(PLUGIN_IMAGE)
+CUSTOM_PLUGIN_VERSION ?= $(VERSION)
+CUSTOM_GATEWAY_IMAGE ?= $(GATEWAY_IMAGE)
+CUSTOM_GATEWAY_VERSION ?= $(VERSION)
 
 # Whether the kustomize install should be applied or just printed out
 DRY_RUN ?= false
 # The namespace to deploy the plugin to on the Openshift cluster
 NAMESPACE ?= hawtio-online
-# Should the install be http rather than the default of https
-HTTP_ONLY ?= false
 # Uninstall all hawtio-onlineresources: [true|false]
 UNINSTALL_ALL ?=false
 
@@ -82,15 +83,21 @@ UNINSTALL_ALL ?=false
 #
 
 #
-# Macro for editing kustomization to define the image reference
+# Macro for editing kustomization to define the image references
 #
 # Parameters:
 # - directory of the kustomization.yaml
 #
-define set-kustomize-image
-	$(if $(filter $(IMAGE_NAME),$(CUSTOM_IMAGE):$(CUSTOM_VERSION)),,\
+define set-kustomize-plugin-image
+	$(if $(filter $(PLUGIN_IMAGE),$(CUSTOM_PLUGIN_IMAGE):$(CUSTOM_PLUGIN_VERSION)),,\
 		@cd $(DEPLOY)/$(1) || exit 1 && \
-			$(KUSTOMIZE) edit set image $(IMAGE_NAME)=$(CUSTOM_IMAGE):$(CUSTOM_VERSION))
+			$(KUSTOMIZE) edit set image $(PLUGIN_IMAGE)=$(CUSTOM_PLUGIN_IMAGE):$(CUSTOM_PLUGIN_VERSION))
+endef
+
+define set-kustomize-gateway-image
+	$(if $(filter $(GATEWAY_IMAGE),$(CUSTOM_GATEWAY_IMAGE):$(CUSTOM_GATEWAY_VERSION)),,\
+		@cd $(DEPLOY)/$(1) || exit 1 && \
+			$(KUSTOMIZE) edit set image $(GATEWAY_IMAGE)=$(CUSTOM_GATEWAY_IMAGE):$(CUSTOM_GATEWAY_VERSION))
 endef
 
 #
@@ -187,13 +194,6 @@ else
 CONTAINER_BUILDER=$(shell command -v docker 2> /dev/null)
 endif
 
-http-only:
-ifeq ($(HTTP_ONLY), false)
-DEPLOY_DIR=$(BASE)
-else
-DEPLOY_DIR=$(HTTP)
-endif
-
 #
 # Checks if the cluster user has the necessary privileges to be a cluster-admin
 # In this case if the user can list the CRDs then probably a cluster-admin
@@ -242,7 +242,7 @@ build: setup
 #
 #---
 clean:
-	rm -rf dist
+	rm -rf packages/*/dist
 
 #---
 #
@@ -294,16 +294,40 @@ format-fix: setup
 
 #---
 #
-#@ image
+#@ license
 #
-#== Executes a local build of the production container image
+#== Extracts all the licenses from the project and create a text file in docker/
+#
+#=== Calls yarn
+#
+#---
+license: yarn
+	yarn license
+
+.plugin-image: container-builder license
+	@echo "####### Building Hawtio Online Console Plugin image..."
+	$(CONTAINER_BUILDER) build -t $(CUSTOM_PLUGIN_IMAGE):$(CUSTOM_PLUGIN_VERSION) -f $(PLUGIN_DOCKERFILE) .
+
+.gateway-image: container-builder
+	@echo "####### Building Hawtio Online Console Plugin Gateway image..."
+	$(CONTAINER_BUILDER) build -t $(CUSTOM_GATEWAY_IMAGE):$(CUSTOM_GATEWAY_VERSION) -f $(GATEWAY_DOCKERFILE) .
+
+#---
+#
+#@ images
+#
+#== Executes a local build of the production container images
 #
 #=== Calls container-builder
 #
 #---
-image: container-builder
-	@echo "####### Building Hawtio Online Console Plugin image..."
-	$(CONTAINER_BUILDER) build -t $(CUSTOM_IMAGE):$(CUSTOM_VERSION) -f $(NGINX_DOCKERFILE) .
+image: license .plugin-image .gateway-image
+
+.plugin-image-push: container-builder
+	$(CONTAINER_BUILDER) push $(CUSTOM_PLUGIN_IMAGE):$(CUSTOM_PLUGIN_VERSION)
+
+.gateway-image-push: container-builder
+	$(CONTAINER_BUILDER) push $(CUSTOM_GATEWAY_IMAGE):$(CUSTOM_GATEWAY_VERSION)
 
 #---
 #
@@ -314,10 +338,9 @@ image: container-builder
 #=== Calls container-builder
 #
 #---
-image-push: container-builder
-	$(CONTAINER_BUILDER) push $(CUSTOM_IMAGE):$(CUSTOM_VERSION)
+image-push: .plugin-image-push .gateway-image-push
 
-.PHONY: build clean lint lint-fix format format-fix image image-push
+.PHONY: build clean lint lint-fix format format-fix license .plugin-image .gateway-image image .plugin-image-push .gateway-image-push image-push
 
 #
 # ============================
@@ -349,22 +372,23 @@ generate-proxying: check-admin
 #=== Calls kustomize
 #=== Calls kubectl
 #=== Calls jq
-#=== Calls http-only
 #=== Calls generate-proxying
 #
 #* PARAMETERS:
-#** HTTP_ONLY:               Set the install to be non-ssl / tls
 #** NAMESPACE:               Set the namespace for the resources
-#** CUSTOM_IMAGE:            Set a custom image to install from
-#** CUSTOM_VERSION:          Set a custom version to install from
+#** CUSTOM_PLUGIN_IMAGE:     Set a custom plugin image to install from
+#** CUSTOM_PLUGIN_VERSION:   Set a custom plugin version to install from
+#** CUSTOM_GATEWAY_IMAGE:    Set a custom gateway image to install from
+#** CUSTOM_GATEWAY_VERSION:  Set a custom gateway version to install from
 #** DRY_RUN:                 Print the resources to be applied instead of applying them [ true | false ]
 #
 #---
-install: kustomize kubectl jq http-only
+install: kustomize kubectl jq
 # Set the namespace in the setup kustomization yaml
-	@$(call set-kustomize-namespace,$(DEPLOY_DIR))
-# Set the image reference of the kustomization
-	@$(call set-kustomize-image,$(DEPLOY_DIR))
+	@$(call set-kustomize-namespace,$(BASE))
+# Set the image references of the kustomization
+	@$(call set-kustomize-plugin-image,$(BASE))
+	@$(call set-kustomize-gateway-image,$(BASE))
 #
 # Build the resources
 # Either apply to the cluster or output to CLI
@@ -372,11 +396,11 @@ install: kustomize kubectl jq http-only
 # that may remain, eg. in rolebindings
 #
 ifeq ($(DRY_RUN), true)
-	@$(KUSTOMIZE) build $(KOPTIONS) $(DEPLOY)/$(DEPLOY_DIR) | \
+	@$(KUSTOMIZE) build $(KOPTIONS) $(DEPLOY)/$(BASE) | \
 		sed 's/$(PLACEHOLDER)/$(NAMESPACE)/'
 else
 	@$(MAKE) -s generate-proxying
-	@$(KUSTOMIZE) build $(KOPTIONS) $(DEPLOY)/$(DEPLOY_DIR) | \
+	@$(KUSTOMIZE) build $(KOPTIONS) $(DEPLOY)/$(BASE) | \
 		sed 's/$(PLACEHOLDER)/$(NAMESPACE)/' | \
 		$(KUBECTL) apply -f -
 	./scripts/patch-console.sh $(PLUGIN)
@@ -400,11 +424,11 @@ endif
 #---
 uninstall: kubectl kustomize
 # Set the namespace in the all target kustomization yaml
-	@$(call set-kustomize-namespace, $(DEPLOY)/$(HTTP))
+	@$(call set-kustomize-namespace,$(BASE))
 ifeq ($(DRY_RUN), false)
-	@$(KUSTOMIZE) build $(KOPTIONS) $(CLUSTER_TYPE)/$(MODE) | kubectl delete --ignore-not-found=true -f -
+	@$(KUSTOMIZE) build $(KOPTIONS) $(DEPLOY)/$(BASE) | kubectl delete --ignore-not-found=true -f -
 else
-	@$(KUSTOMIZE) build $(KOPTIONS) $(CLUSTER_TYPE)/$(MODE) | kubectl delete --dry-run=client -f -
+	@$(KUSTOMIZE) build $(KOPTIONS) $(DEPLOY)/$(BASE) | kubectl delete --dry-run=client -f -
 endif
 
 help: ## Show this help screen.
@@ -413,4 +437,4 @@ help: ## Show this help screen.
 .DEFAULT_GOAL := help
 default: help
 
-.PHONY: install uninstall help
+.PHONY: generate-proxying install uninstall help

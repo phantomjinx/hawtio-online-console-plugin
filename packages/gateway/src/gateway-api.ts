@@ -1,74 +1,94 @@
 /* jshint node: true */
 import express from 'express'
-import { createProxyMiddleware, responseInterceptor } from 'http-proxy-middleware'
 import helmet from 'helmet'
 import methodOverride from 'method-override'
 import cors from 'cors'
 import * as fs from 'fs'
 import * as https from 'https'
-import { Server } from 'http'
 import { logger, expressLogger } from './logger'
-import { proxyMasterGuard } from './master-guard'
-import { proxyJolokiaAgent } from './jolokia-agent'
-import { GatewayOptions } from './globals'
-import { maskIPAddresses } from './utils'
+import { proxyJolokiaAgent, SSLOptions } from './jolokia-agent'
 
 const environment = process.env.NODE_ENV || 'development'
+
+/*
+ * - Specified by default in env file
+ * - Can be overriden by env var in deployment resource
+ */
 const port = process.env.HAWTIO_ONLINE_GATEWAY_APP_PORT || 3000
-const webServer = process.env.HAWTIO_ONLINE_GATEWAY_WEB_SERVER || 'http://localhost:3001'
-const clusterMaster = process.env.HAWTIO_ONLINE_GATEWAY_CLUSTER_MASTER || 'https://kubernetes.default'
+
+/*
+ * All specified in deployment resource
+ *
+ */
 const sslKey = process.env.HAWTIO_ONLINE_GATEWAY_SSL_KEY || ''
 const sslCertificate = process.env.HAWTIO_ONLINE_GATEWAY_SSL_CERTIFICATE || ''
 const sslCertificateCA = process.env.HAWTIO_ONLINE_GATEWAY_SSL_CERTIFICATE_CA || ''
-let useHttps = false
+const sslProxyKey = process.env.HAWTIO_ONLINE_GATEWAY_SSL_PROXY_KEY || ''
+const sslProxyCertificate = process.env.HAWTIO_ONLINE_GATEWAY_SSL_PROXY_CERTIFICATE || ''
 
-if (sslCertificate.length > 0) {
-  if (!fs.existsSync(sslKey)) {
-    logger.error(`The ssl key assigned at "${sslKey}" does not exist`)
+function checkEnvVar(envVar: string, item: string) {
+  if (!envVar || envVar.length === 0) {
+    logger.error(`An ${item} is required but has not been specified`)
     process.exit(1)
   }
 
-  if (!fs.existsSync(sslCertificate)) {
-    logger.error(`The ssl certificate assigned at "${sslCertificate}" does not exist`)
+  if (!fs.existsSync(envVar)) {
+    logger.error(`The ${item} assigned at "${envVar}" does not exist`)
     process.exit(1)
   }
-
-  if (sslCertificateCA.length > 0 && !fs.existsSync(sslCertificateCA)) {
-    logger.error(`The ssl certificate authority assigned at "${sslCertificateCA}" does not exist`)
-    process.exit(1)
-  }
-
-  useHttps = true
 }
 
-const gatewayOptions: GatewayOptions = {
-  websvr: webServer,
-  clusterMaster: clusterMaster,
+checkEnvVar(sslKey, 'SSL Certifcate Key')
+checkEnvVar(sslCertificate, 'SSL Certifcate')
+checkEnvVar(sslCertificateCA, 'SSL Certifcate Authority')
+checkEnvVar(sslProxyKey, 'SSL Proxy Certifcate Key')
+checkEnvVar(sslProxyCertificate, 'SSL Proxy Certifcate')
+
+const sslOptions: SSLOptions = {
+  certCA: fs.readFileSync(sslCertificateCA),
+  proxyKey: fs.readFileSync(sslProxyKey),
+  proxyCert: fs.readFileSync(sslProxyCertificate)
 }
 
 export const gatewayServer = express()
 
 logger.info('**************************************')
-logger.info(`* Environment:      ${environment}`)
-logger.info(`* App Port:         ${port}`)
-logger.info(`* Web Server:       ${gatewayOptions.websvr}`)
-logger.info(`* Log Level:        ${logger.level}`)
-logger.info(`* SSL Enabled:      ${sslCertificate !== ''}`)
-logger.info(`* RBAC:             ${process.env['HAWTIO_ONLINE_RBAC_ACL'] || 'default'}`)
+logger.info(`* Environment:       ${environment}`)
+logger.info(`* App Port:          ${port}`)
+logger.info(`* Log Level:         ${logger.level}`)
+logger.info(`* SSL Enabled:       ${sslCertificate !== ''}`)
+logger.info(`* Proxy SSL Enabled: ${sslProxyCertificate !== ''}`)
+logger.info(`* RBAC:              ${process.env['HAWTIO_ONLINE_RBAC_ACL'] || 'default'}`)
 logger.info('**************************************')
 
 // Log middleware requests
 gatewayServer.use(expressLogger)
 
-if (environment !== 'development') {
-  gatewayServer.set('trust proxy', 1) // trust first proxy
-}
-
-// Heightens security providing headers
-gatewayServer.use(helmet())
+/*
+ * Heightens security providing headers
+ *
+ * - Sets X-Frame-Options: "SAMEORIGIN"
+ */
+gatewayServer.use(helmet(
+  {
+    strictTransportSecurity: {
+      maxAge: 31536000,
+      includeSubDomains: true
+    },
+    contentSecurityPolicy: {
+      directives: {
+        'default-src': 'self',
+        'frame-ancestors': 'self',
+        'form-action': 'self',
+      },
+    },
+  }
+))
 
 // Cross Origin Support
-gatewayServer.use(cors())
+gatewayServer.use(cors({
+  credentials: true,
+}))
 
 // override with the X-HTTP-Method-Override header in the request. simulate DELETE/PUT
 gatewayServer.use(methodOverride('X-HTTP-Method-Override'))
@@ -77,69 +97,10 @@ gatewayServer.use(methodOverride('X-HTTP-Method-Override'))
  * Provide a status route for the server. Used for
  * establishing a heartbeat when installed on the cluster
  */
-gatewayServer.get('/status', (req, res) => {
+gatewayServer.route('/status').get((req, res) => {
   res.setHeader('Content-Type', 'application/json')
-  res.status(200).json({ port: port, webServer: gatewayOptions.websvr })
+  res.status(200).json({ port: port, loglevel: logger.level})
 })
-
-/**
- * Logout endpoint that decodes the redirect_uri
- * parameter and redirects accordingly.
- */
-gatewayServer.get('/logout', (req, res) => {
-  let redirectUri = req.query.redirect_uri
-
-  if (!redirectUri) {
-    res.status(200).end('Acknowledge logout but nothing further to do.')
-  }
-
-  redirectUri = decodeURIComponent(redirectUri as string)
-  res.status(307).redirect(redirectUri)
-})
-
-/**
- * Guard the master endpoint, narrowing its access, before
- * re-routing the request to the cluster server
- *
- * NOTE:
- * This endpoint goes directly to the kubernetes cluster
- * due to the need to support websockets. Going back to
- * the web server breaks the connection and websockets
- * fail to startup.
- */
-gatewayServer.use(
-  '/master',
-  createProxyMiddleware({
-    target: `${gatewayOptions.clusterMaster}`,
-    logger: logger,
-    changeOrigin: false,
-    ws: true,
-    secure: false,
-    /**
-     * IMPORTANT: avoid res.end being called automatically
-     **/
-    selfHandleResponse: true,
-
-    pathFilter: (path, _) => {
-      const result = proxyMasterGuard('/master' + path)
-      return result.status
-    },
-
-    pathRewrite: (path, _) => {
-      return path.replace('/master', '')
-    },
-
-    /**
-     * Intercept response
-     **/
-    on: {
-      proxyRes: responseInterceptor(async (responseBuffer, proxyRes, req, res) => {
-        const jsonStr = responseBuffer.toString('utf8')
-        return maskIPAddresses(jsonStr)
-      }),
-    },
-  }),
-)
 
 /**
  * Manages the connection to the jolokia server in app
@@ -147,10 +108,10 @@ gatewayServer.use(
 gatewayServer
   .route('/management/*')
   .get((req, res) => {
-    proxyJolokiaAgent(req, res, gatewayOptions)
+    proxyJolokiaAgent(req, res, sslOptions)
   })
   .post(express.json({ type: '*/json', limit: '50mb', strict: false }), (req, res) => {
-    proxyJolokiaAgent(req, res, gatewayOptions)
+    proxyJolokiaAgent(req, res, sslOptions)
   })
 
 /**
@@ -177,22 +138,17 @@ gatewayServer.use(express.urlencoded({ extended: false }))
 /*
  * Exports the running server for use in unit testing
  */
-export let runningGatewayServer: Server
-if (useHttps) {
-  const gatewayHttpsServer = https.createServer(
-    {
-      key: fs.readFileSync(sslKey),
-      cert: fs.readFileSync(sslCertificate),
-      ca: fs.readFileSync(sslCertificateCA),
-    },
-    gatewayServer,
-  )
+const gatewayHttpsServer = https.createServer(
+  {
+    key: fs.readFileSync(sslKey),
+    cert: fs.readFileSync(sslCertificate),
+    ca: sslOptions.certCA,
+    requestCert: true,
+    rejectUnauthorized: false,
+  },
+  gatewayServer,
+)
 
-  runningGatewayServer = gatewayHttpsServer.listen(port, () => {
-    logger.info(`HTTPS Server running on port ${port}`)
-  })
-} else {
-  runningGatewayServer = gatewayServer.listen(port, () => {
-    logger.info(`INFO: Gateway listening on port ${port}`)
-  })
-}
+export const runningGatewayServer = gatewayHttpsServer.listen(port, () => {
+  logger.info(`HTTPS Server running on port ${port}`)
+})
