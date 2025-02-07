@@ -26,7 +26,6 @@ class FetchPatchService {
   private csrfToken?: string
 
   constructor() {
-    console.log('Constructing the fetch-patch-service')
     this.setupFetch()
   }
 
@@ -42,8 +41,6 @@ class FetchPatchService {
           }
         }
 
-        console.log(`Fetching url ${url}`)
-
         // Include any requestConfig headers to ensure they are retained
         let headers: Headers = {
           'Content-Type': 'application/json'
@@ -52,7 +49,6 @@ class FetchPatchService {
         // Required token for protected authenticated access
         // to cluster from the console
         this.csrfToken = getCSRFToken()
-        console.log(`CSRF TOKEN: ${this.csrfToken}`)
 
         if (this.csrfToken) {
           headers = {
@@ -68,42 +64,10 @@ class FetchPatchService {
           headers = { ...requestConfig.headers, ...headers }
         }
 
-        console.log('Sending Request headers:')
-        console.log(headers)
-
         // headers must be 2nd so that it overwrites headers property in requestConfig
         return [url, { ...requestConfig, headers }]
       },
     })
-  //
-  //   const pods = [
-  //     {
-  //       namespace: 'hawtio-dev',
-  //       name: 'camel-helloworld-88f6d6496-84mh2',
-  //       protocol: 'http',
-  //       port: '10001',
-  //       jolokiaPath: '/actuator/jolokia/version'
-  //     },
-  //     {
-  //       namespace: 'hawtio-dev',
-  //       name: 'hawtio-online-example-camel-springboot-os-5-zjpk6',
-  //       protocol: 'https',
-  //       port: '8778',
-  //       jolokiaPath: '/jolokia/version'
-  //     }
-  //   ]
-  //
-  //   for (const pod of pods) {
-  //     const path = `/management/namespaces/${pod.namespace}/pods/${pod.protocol}:${pod.name}:${pod.port}${pod.jolokiaPath}`
-  //     const sidecarUrl = `${PLUGIN_BASE_PATH}/${path}`
-  //
-  //     console.log(`=== Trying to get a jolokia path for pod ${pod.name} ===`)
-  //     consoleFetchJSON(sidecarUrl)
-  //       .then((response) => {
-  //         console.log('Response for sidecar proxy:')
-  //         console.log(response)
-  //       })
-  //   }
   }
 
   destroy() {

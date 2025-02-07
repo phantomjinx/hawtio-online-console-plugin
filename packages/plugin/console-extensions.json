@@ -40,5 +40,24 @@
       },
       "component": { "$codeRef": "HawtioMainTab" }
     }
+  },
+  {
+    "type": "console.user-preference/group",
+    "properties": {
+      "id": "hawtioPreferences",
+      "label": "HawtIO"
+    }
+  },
+  {
+    "type": "console.user-preference/item",
+    "properties": {
+      "id": "hawtio-preferences-content",
+      "groupId": "hawtio-preferences",
+      "label": "HawtIO",
+      "field": {
+        "type": "custom",
+        "component": { "$codeRef": "HawtioMainPrefs" }
+      }
+    }
   }
 ]
