@@ -148,13 +148,9 @@ class ConnectionService {
     return joinPaths(window.location.origin, path)
   }
 
-  private newJolokiaPath(pod: K8sPod, newPort: number) {
-    return this.jolokiaPath(pod, newPort) || ''
-  }
-
   private connectToUrl(pod: K8sPod, container: Container): URL {
     const jolokiaPort = this.jolokiaContainerSpecPort(container)
-    const jolokiaPath = this.newJolokiaPath(pod, jolokiaPort)
+    const jolokiaPath = this.jolokiaPath(pod, jolokiaPort) || ''
     const url: URL = new URL(jolokiaPath)
     return url
   }

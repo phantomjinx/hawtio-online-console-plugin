@@ -1,3 +1,8 @@
+/*
+ * ========================================
+ * Removes the vertical double scrollbar
+ * ========================================
+ */
 #hawtio-main-page,
 .camel-split,
 .jmx-split {
@@ -9,10 +14,35 @@
   height: auto !important;
 }
 
+/*
+ * ========================================
+ * Ensures the background of the route
+ * visual nodes is dark
+ * ========================================
+ */
 .react-flow__node-camel .camel-node-content {
   background-color: #656565 !important;
 }
 
+/*
+ * ========================================
+ * Darken the gutter colour between the
+ * Camel/JMX trees and content page
+ * ========================================
+ */
 .gutter {
   background-color: black !important;
+}
+
+/*
+ * ========================================
+ * Removes the light border from around the
+ * tree view nodes
+ * ========================================
+ */
+#camel-tree-view .pf-v5-c-tree-view__node-toggle,
+#camel-tree-view .pf-v5-c-tree-view__node-text,
+#jmx-tree-view .pf-v5-c-tree-view__node-toggle,
+#jmx-tree-view .pf-v5-c-tree-view__node-text {
+  border-color: transparent !important;
 }
