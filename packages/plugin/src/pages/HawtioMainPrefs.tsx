@@ -10,6 +10,7 @@ import { HawtioLoadingPage, preferencesRegistry } from "@hawtio/react"
 import '@hawtio/react/dist/index.css'
 import { log } from '../globals'
 import { Alert, Card, CardBody, Divider, Nav, NavItem, NavList, Page, PageSection, PageSectionVariants } from "@patternfly/react-core"
+import '@patternfly/patternfly/patternfly.css'
 import { stack } from "../utils"
 import './hawtiomainprefs.css'
 

@@ -6,6 +6,7 @@
 import { fetchPatchService } from "../fetch-patch-service"
 import React, { useEffect, useState } from "react"
 import { Alert, Card, CardBody, PageSection, PageSectionVariants } from "@patternfly/react-core"
+import '@patternfly/patternfly/patternfly.css'
 import { K8sPod } from "../types"
 import { hawtioService } from "../hawtio-service"
 import { HawtioLoadingPage, Hawtio } from "@hawtio/react"

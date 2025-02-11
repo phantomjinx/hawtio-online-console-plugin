@@ -4,8 +4,8 @@ const { merge } = require('webpack-merge')
 const CopyWebpackPlugin = require('copy-webpack-plugin')
 const path = require('path')
 const { common } = require('./webpack.config.common.js')
-
-const CompressionPlugin = require('compression-webpack-plugin')
+const CssMinimizerPlugin = require('css-minimizer-webpack-plugin')
+const TerserPlugin = require('terser-webpack-plugin')
 
 module.exports = (env, argv) => {
 
@@ -18,13 +18,27 @@ module.exports = (env, argv) => {
 
     devtool: 'source-map',
 
+    stats: {
+      // Display bailout reasons
+      optimizationBailout: true,
+      logging: 'verbose',
+      usedExports: false,
+      dependentModules: true,
+    },
+
+    optimization: {
+      sideEffects: false,
+      minimizer: [
+        new TerserPlugin({
+          exclude: [ /\.css/, /\.scss/ ],
+        }),
+      ],
+    },
+
     plugins: [
       new CopyWebpackPlugin({
         patterns: [ { from: path.resolve(__dirname, 'public', 'hawtio-logo.svg'), to: 'hawtio-logo.svg' }],
-      }),
-      new CompressionPlugin({
-        threshold: 8192,
-      }),
+      })
     ]
   })
 }

@@ -2,7 +2,6 @@ const webpack = require('webpack')
 const CopyWebpackPlugin = require('copy-webpack-plugin')
 const HtmlWebpackPlugin = require('html-webpack-plugin')
 const InterpolateHtmlPlugin = require('interpolate-html-plugin')
-const MiniCssExtractPlugin = require('mini-css-extract-plugin')
 const { ConsoleRemotePlugin } = require('@openshift-console/dynamic-plugin-sdk-webpack')
 const TsconfigPathsPlugin = require('tsconfig-paths-webpack-plugin')
 const path = require('path')
@@ -42,15 +41,48 @@ const common = (mode, publicPath, env) => {
           ],
         },
         {
-          test: /\.(css)$/,
-          use: ['style-loader', 'css-loader'],
+          test: /\.(sa|sc|c)ss$/,
+          use: [ 'style-loader', 'css-loader', 'sass-loader' ],
+          include: [ /node_modules/, /\.css$/ ],
+          sideEffects: false
         },
         {
-          test: /\.(png|jpg|jpeg|gif|svg|woff2?|ttf|eot|otf)(\?.*$|$)/,
+          test: /\.(svg|woff2?|ttf|eot|otf)(\?.*$|$)/,
           type: 'asset/resource',
+          // only process modules with this loader
+          // if they live under a 'fonts' or 'pficon' directory
+          include: [ /node_modules/ ],
           generator: {
             filename: mode === 'production' ? 'assets/[contenthash][ext]' : 'assets/[name][ext]',
           },
+        },
+        {
+          test: /\.svg$/,
+          type: 'asset/inline',
+          include: (input) => input.indexOf('background-filter.svg') > 1,
+          use: [
+            {
+              options: {
+                limit: 5000,
+                outputPath: 'svgs',
+                name: '[name].[ext]',
+              },
+            },
+          ],
+        },
+        {
+          test: /\.(jpg|jpeg|png|gif)$/i,
+          include: [ /node_modules/ ],
+          type: 'asset/inline',
+          use: [
+            {
+              options: {
+                limit: 5000,
+                outputPath: 'images',
+                name: '[name].[ext]',
+              },
+            },
+          ],
         },
         {
           test: /\.(m?js)$/,
@@ -60,7 +92,6 @@ const common = (mode, publicPath, env) => {
         },
       ]
     },
-
     plugins: [
       new ConsoleRemotePlugin({
         validateSharedModules: true,
@@ -94,10 +125,6 @@ const common = (mode, publicPath, env) => {
         HAWTIO_ONLINE_PACKAGE_VERSION: JSON.stringify(packageVersion),
         HAWTIO_ONLINE_PUBLIC_PATH: JSON.stringify(publicPath),
       }),
-      new MiniCssExtractPlugin({
-        // MiniCssExtractPlugin - Ignore order as otherwise conflicting order warning is raised
-        ignoreOrder: true,
-      })
     ],
     output: {
       path: path.resolve(__dirname, 'dist'),
