@@ -9,11 +9,12 @@ import { Alert, Card, CardBody, PageSection, PageSectionVariants } from "@patter
 import '@patternfly/patternfly/patternfly.css'
 import { K8sPod } from "../types"
 import { hawtioService } from "../hawtio-service"
-import { HawtioLoadingPage, Hawtio } from "@hawtio/react"
+import { Hawtio } from "@hawtio/react"
 import '@hawtio/react/dist/index.css'
 import { stack } from "../utils"
 import './hawtiomaintab.css'
 import { log } from '../globals'
+import { ConsoleLoading } from "./ConsoleLoading"
 
 /*
  * Necessary since fetchPatchService is otherwise
@@ -61,7 +62,7 @@ export const HawtioMainTab: React.FunctionComponent<HawtioMainTabProps> = (props
 
   if (isLoading) {
     return (
-      <HawtioLoadingPage/>
+      <ConsoleLoading/>
     )
   }
 
