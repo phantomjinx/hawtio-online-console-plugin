@@ -18,6 +18,7 @@ import { HAWTIO_ONLINE_VERSION } from './constants'
 import { log } from './globals'
 import { K8sPod } from "./types"
 import { connectionService } from "./connection-service"
+import { pluginHeaderDropdown, pluginHeaderDropdownId } from "./plugins"
 
 class HawtioService {
 
@@ -116,6 +117,7 @@ class HawtioService {
     await this.initPlugin(pluginIds, 'logs', logs)
     await this.initPlugin(pluginIds, 'quartz', quartz)
     await this.initPlugin(pluginIds, 'springboot', springboot)
+    await this.initPlugin(pluginIds, pluginHeaderDropdownId, pluginHeaderDropdown)
 
     // Reset the jolokia service
     jolokiaService.reset()

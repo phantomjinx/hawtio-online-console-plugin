@@ -13,8 +13,9 @@
     "favicon": "/online/favicon.ico"
   },
   "appearance": {
-    "showHeader": false,
-    "pluginBarOrientation": "horizontal"
+    "showBrand": false,
+    "showUserHeader": false,
+    "showSideBar": false
   },
   "login": {
     "title": "Log in with your token"
