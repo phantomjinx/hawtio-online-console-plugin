@@ -7,9 +7,9 @@ import {
 import { K8sPod } from './types'
 import { ContainerPort, Container } from 'kubernetes-types/core/v1'
 import { Connection, Connections, SESSION_KEY_CURRENT_CONNECTION, connectService, eventService } from '@hawtio/react'
-import { CONSOLE_SDK_BASEPATH, HTTPError, isBlank, isJolokiaVersionResponseType, joinPaths, jolokiaResponseParse, ParseResult, prefixForKind, toCollectionName, toKindName } from './utils'
+import { HTTPError, isBlank, isJolokiaVersionResponseType, joinPaths, jolokiaResponseParse, ParseResult } from './utils'
 import { log } from './globals'
-import { PLUGIN_BASE_PATH, PROXY_GATEWAY_BASE_PATH } from './constants'
+import { PROXY_GATEWAY_BASE_PATH } from './constants'
 
 const DEFAULT_JOLOKIA_PORT = 8778
 const JOLOKIA_PORT_QUERY = "$.spec.containers[*].ports[?(@.name==\"jolokia\")]";
@@ -223,7 +223,7 @@ class ConnectionService {
       }
 
       const versionResponse = jsonResponse.value as JolokiaVersionResponseValue
-      log.debug('Found jolokia agent at:', this.jolokiaPath, 'details:', versionResponse.agent)
+      log.debug('Found jolokia agent at:', path, 'details:', versionResponse.agent)
       resolve(path)
     } catch (e) {
       // Parse error should mean redirect to html
@@ -281,39 +281,43 @@ class ConnectionService {
 
   async connect(pod: K8sPod): Promise<Error|null> {
     // Make the pod the current connection
-    const connectionName: string = connectionService.deriveConnection(pod)
-    console.log(`Connection Names: ${connectionName}`)
+    const connectionId: string = connectionService.deriveConnection(pod)
 
-    if (isBlank(connectionName)) {
+    if (isBlank(connectionId)) {
       return new Error('No connection could be resolved for this pod')
     }
 
     const connections: Connections = connectService.loadConnections()
 
-    const connection: Connection = connections[connectionName]
+    const connection: Connection = connections[connectionId]
     if (!connection) {
-      return new Error(`There is no connection configured with name ${connectionName}`)
+      return new Error(`There is no connection configured with name ${connectionId}`)
     }
 
     try {
       const result = await this.testConnection(connection)
       if (!result) {
-        const msg = `There was a problem connecting to the jolokia service ${connectionName}`
+        const msg = `There was a problem connecting to the jolokia service ${connectionId}`
         log.error(msg)
         return new Error(msg)
       }
 
-      // Set the connection as the current connection
-      sessionStorage.setItem(SESSION_KEY_CURRENT_CONNECTION, JSON.stringify(connectionName))
+      log.debug(`Recording current connection as ${connectionId}`)
+
+      connectService.setCurrentConnection(connection)
       return null
     }
     catch(error) {
-      const msg = `A problem occurred while trying to connect to the jolokia service ${connectionName}`
+      const msg = `A problem occurred while trying to connect to the jolokia service ${connectionId}`
       log.error(msg)
       log.error(error)
       eventService.notify({ type: 'danger', message: msg })
       return new Error(msg, { cause: error as Error })
     }
+  }
+
+  clear() {
+    sessionStorage.removeItem(SESSION_KEY_CURRENT_CONNECTION)
   }
 }
 

@@ -11,7 +11,6 @@ import { K8sPod } from "../types"
 import { hawtioService } from "../hawtio-service"
 import { HawtioLoadingPage, Hawtio } from "@hawtio/react"
 import '@hawtio/react/dist/index.css'
-import { connectionService } from "../connection-service"
 import { stack } from "../utils"
 import './hawtiomaintab.css'
 import { log } from '../globals'
@@ -42,38 +41,11 @@ export const HawtioMainTab: React.FunctionComponent<HawtioMainTabProps> = (props
 
   useEffect(() => {
     if (isLoading) {
-      const awaitServices = async () => {
-        log.debug(`Probing pod ${pod.metadata?.name} ...`)
-
-        try {
-          const url = await connectionService.probeJolokiaUrl(pod)
-          if (!url) {
-            setError(new Error('Failed to reach a recognised jolokia url for this pod'))
-            setLoading(false)
-            return
-          }
-        } catch (error) {
-          setError(new Error(`Cannot access the jolokia url for this pod`, { cause: error }))
-          setLoading(false)
-          return
-        }
-
-        log.debug(`Connecting to pod ${pod.metadata?.name} ...`)
-
-        /*
-         * Set the current connection before initializing
-         */
-        const error = await connectionService.connect(pod)
-        if (error) {
-          setError(error)
-          setLoading(false) // error occurred so loading is done
-          return
-        }
-
+      const awaitService = async () => {
         log.debug(`Intialising Hawtio for pod ${pod.metadata?.name} ...`)
-        await hawtioService.init()
+        await hawtioService.reset(pod)
 
-        if (! hawtioService.isHawtioReady()) {
+        if (! hawtioService.isResolved()) {
           setError(new Error('Failure to initialize the HawtioService', { cause: hawtioService.getError() }))
           setLoading(false) // error occurred so loading is done
           return
@@ -83,7 +55,7 @@ export const HawtioMainTab: React.FunctionComponent<HawtioMainTabProps> = (props
         setLoading(false)
       }
 
-      awaitServices()
+      awaitService()
     }
   }, [isLoading])
 

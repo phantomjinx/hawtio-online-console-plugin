@@ -34,9 +34,14 @@ export const HawtioMainPrefs: React.FunctionComponent<HawtioMainPrefsProps> = (p
     if (isLoading) {
       const awaitServices = async () => {
         log.debug(`Intialising Hawtio Preferences ...`)
-        await hawtioService.init()
+        await hawtioService.reset(null)
 
-        if (! hawtioService.isHawtioReady()) {
+        /*
+         * Plugins will not necessarily be resolved
+         * since their is no pod attached to the preferences
+         * However, the preferences will have been added to registry
+         */
+        if (! hawtioService.isInitialized()) {
           setError(new Error('Failure to initialize the HawtioService', { cause: hawtioService.getError() }))
           setLoading(false) // error occurred so loading is done
           return
